@@ -148,6 +148,80 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Join request handling
+  socket.on('join-request', (data) => {
+    const { roomId, userInfo } = data;
+    const room = rooms.get(roomId);
+    
+    if (room && room.isLive) {
+      // Store user ID on socket for later reference
+      socket.userId = userInfo.id;
+      
+      // Notify creator about join request
+      io.to(room.creator).emit('join-request', {
+        userInfo,
+        roomId,
+        requestId: socket.id
+      });
+      
+      console.log(`🙋 Join request from ${userInfo.name} (${userInfo.id}) to room ${roomId}`);
+    } else {
+      socket.emit('room-not-found');
+    }
+  });
+
+  socket.on('join-request-response', (data) => {
+    const { roomId, requestId, approved } = data;
+    const room = rooms.get(roomId);
+    
+    if (room && room.creator === socket.id) {
+      // Find the requesting user's socket by request ID (socket ID)
+      const userSocket = io.sockets.sockets.get(requestId);
+      
+      if (userSocket) {
+        userSocket.emit('join-request-response', {
+          roomId,
+          approved
+        });
+        
+        // If approved, allow them to join directly
+        if (approved) {
+          userSocket.emit('join-approved', { roomId });
+        }
+        
+        console.log(`${approved ? '✅' : '❌'} Join request ${approved ? 'approved' : 'denied'} for request ${requestId} in room ${roomId}`);
+      }
+    }
+  });
+
+  // Direct join after approval
+  socket.on('join-room-direct', (data) => {
+    const { roomId, viewerInfo } = data;
+    const room = rooms.get(roomId);
+    
+    if (room && room.isLive) {
+      socket.join(roomId);
+      socket.userId = viewerInfo.id;
+      socket.roomId = roomId;
+      
+      room.viewers.set(socket.id, viewerInfo);
+      
+      // Notify creator about new viewer
+      socket.to(room.creator).emit('viewer-joined', {
+        viewerId: socket.id,
+        viewerInfo,
+        totalViewers: room.viewers.size
+      });
+      
+      // Notify all viewers about updated count
+      io.to(roomId).emit('viewer-count-update', {
+        totalViewers: room.viewers.size
+      });
+      
+      console.log(`👁️ Approved viewer joined room ${roomId}. Total: ${room.viewers.size}`);
+    }
+  });
+
   socket.on('end-stream', (data) => {
     const { roomId } = data;
     const room = rooms.get(roomId);
